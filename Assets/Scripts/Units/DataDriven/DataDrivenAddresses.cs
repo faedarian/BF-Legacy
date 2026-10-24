@@ -8,8 +8,8 @@
 //   Sams/Unit_SAMS/unit_sam/10011/unit_anime_10011   (same as BfAddressablesSetup)
 //   {effectId}                                        (ParticleEffect SOs)
 // Data files (emitted by the regen tool) are flat:
-//   unit_{unitId}          → UnitData JSON
-//   ability_{skillId}      → AbilityData JSON
+//   unit_{unitId}                 → UnitData JSON
+//   ability_{kind}_{abilityId}    → AbilityData JSON (kind: basic/bb/leader/extra)
 // Editor table data ships under their EditorData paths.
 public static class DataDrivenAddresses
 {
@@ -23,7 +23,7 @@ public static class DataDrivenAddresses
     public const string EffectGroupMstLabel = "dd_effectgroupmst";
 
     public static string UnitJson(string unitId)       => $"unit_{unitId}";
-    public static string AbilityJson(string abilityId) => $"ability_{abilityId}";
+    public static string AbilityJson(AbilityKind kind, string abilityId) => $"ability_{kind.Tag()}_{abilityId}";
 
     public static string Sprite(string fileNameNoExt)       => $"{SpriteRoot}/{fileNameNoExt}";
     public static string Cgg(string animationId)            => $"{CggRoot}/unit_cgg_{animationId}";

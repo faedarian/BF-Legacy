@@ -1,39 +1,45 @@
 // AbilityRegistry.cs
 // Consumer-facing ability cache for the data-driven pipeline. Mirrors the old
-// baked Ability SOs: each ability_{skillId}.json deserializes once into a
-// shared DTO, then builds one runtime Ability view with resolved
-// ParticleEffect/AudioClip references. Abilities are shared across units, so
-// the view is cached by id for the session (no release, like UnitRegistry v1).
+// baked Ability SOs: each ability_{kind}_{id}.json / per-kind db table row
+// deserializes once into a shared DTO, then builds one runtime Ability view
+// with resolved ParticleEffect/AudioClip references. Abilities are shared
+// across units, so the view is cached by (kind, id) for the session (no
+// release, like UnitRegistry v1).
 using System.Collections.Generic;
 using UnityEngine;
 
 public static class AbilityRegistry
 {
-    static readonly Dictionary<string, Ability> s_abilities = new Dictionary<string, Ability>();
+    static readonly Dictionary<(AbilityKind Kind, string AbilityId), Ability> s_abilities = new Dictionary<(AbilityKind, string), Ability>();
 
-    public static Ability GetAbilityById(string abilityId)
+    /// <summary>
+    /// Resolves an ability by kind + id — the kind mirrors the unit field the id
+    /// came from (basic/bb/sbb/ubb/leader/extra) and selects the per-kind table.
+    /// </summary>
+    public static Ability GetAbilityById(AbilityKind kind, string abilityId)
     {
         if (string.IsNullOrEmpty(abilityId)) return null;
-        if (s_abilities.TryGetValue(abilityId, out Ability cached)) return cached;
+        var key = (kind, abilityId);
+        if (s_abilities.TryGetValue(key, out Ability cached)) return cached;
 
-        AbilityData data = UnitDataRegistry.GetAbilityData(abilityId);
+        AbilityData data = UnitDataRegistry.GetAbilityData(kind, abilityId);
         if (data == null) return null;
 
-        Ability ability = Build(data);
-        s_abilities[abilityId] = ability;
+        Ability ability = Build(data, kind);
+        s_abilities[key] = ability;
         return ability;
     }
 
-    public static bool TryGetLoadedAbility(string abilityId, out Ability ability)
-        => s_abilities.TryGetValue(abilityId, out ability);
+    public static bool TryGetLoadedAbility(AbilityKind kind, string abilityId, out Ability ability)
+        => s_abilities.TryGetValue((kind, abilityId), out ability);
 
     /// <summary>Addresses referenced by this ability's effect frames, for warmup.</summary>
-    public static void Warmup(IEnumerable<string> abilityIds)
+    public static void Warmup(AbilityKind kind, IEnumerable<string> abilityIds)
     {
         foreach (string abilityId in abilityIds)
         {
-            if (string.IsNullOrEmpty(abilityId) || s_abilities.ContainsKey(abilityId)) continue;
-            AbilityData data = UnitDataRegistry.TryGetCachedAbilityData(abilityId, out var d) ? d : null;
+            if (string.IsNullOrEmpty(abilityId) || s_abilities.ContainsKey((kind, abilityId))) continue;
+            AbilityData data = UnitDataRegistry.TryGetCachedAbilityData(kind, abilityId, out var d) ? d : null;
             if (data?.effectFrames == null) continue;
 
             var addresses = new List<string>();
@@ -46,10 +52,10 @@ public static class AbilityRegistry
         }
     }
 
-    static Ability Build(AbilityData data)
+    static Ability Build(AbilityData data, AbilityKind kind)
     {
         Ability a = ScriptableObject.CreateInstance<Ability>();
-        a.name = $"ability_{data.abilityId}";
+        a.name = $"ability_{kind.Tag()}_{data.abilityId}";
 
         a.abilityId        = data.abilityId;
         a.abilityName      = data.abilityName;

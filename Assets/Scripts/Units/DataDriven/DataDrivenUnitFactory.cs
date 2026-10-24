@@ -103,12 +103,12 @@ public static class DataDrivenUnitFactory
         u.statsLord = d.statsLord;
 
         // ── Abilities ──
-        u.basicAbility  = AbilityRegistry.GetAbilityById(d.basicAbilityId);
-        u.bbAbility     = AbilityRegistry.GetAbilityById(d.bbAbilityId);
-        u.sbbAbility    = AbilityRegistry.GetAbilityById(d.sbbAbilityId);
-        u.ubbAbility    = AbilityRegistry.GetAbilityById(d.ubbAbilityId);
-        u.leaderAbility = AbilityRegistry.GetAbilityById(d.leaderAbilityId);
-        u.extraAbility  = AbilityRegistry.GetAbilityById(d.extraAbilityId);
+        u.basicAbility  = AbilityRegistry.GetAbilityById(AbilityKind.Basic,  d.basicAbilityId);
+        u.bbAbility     = AbilityRegistry.GetAbilityById(AbilityKind.Bb,     d.bbAbilityId);
+        u.sbbAbility    = AbilityRegistry.GetAbilityById(AbilityKind.Bb,     d.sbbAbilityId);
+        u.ubbAbility    = AbilityRegistry.GetAbilityById(AbilityKind.Bb,     d.ubbAbilityId);
+        u.leaderAbility = AbilityRegistry.GetAbilityById(AbilityKind.Leader, d.leaderAbilityId);
+        u.extraAbility  = AbilityRegistry.GetAbilityById(AbilityKind.Extra,  d.extraAbilityId);
         u.bbType        = d.bbType;
 
         // ── Movement ──

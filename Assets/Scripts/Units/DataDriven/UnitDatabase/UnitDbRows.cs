@@ -4,6 +4,14 @@
 // (UnitDisplay, UnitStats, Vector2, hit/effect frames, levels) stay as compact
 // JSON text columns. Enums store as TEXT via [StoreAsText] — same string form
 // the JSON files use — so row <-> DTO round-trips are lossless.
+//
+// Abilities are split into per-kind tables (abilities_basic / abilities_bb /
+// abilities_leader / abilities_extra). Raw leader/extra skill ids come from
+// different id spaces than the skill MST ids used by bb/sbb/ubb and collide
+// numerically, so a single shared table would silently lose rows; unit data
+// references an ability id together with the field that holds it, and that
+// field's kind selects the table. SBB and UBB share the bb table (skill MST
+// ids are unique across all three).
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -80,7 +88,7 @@ public class UnitDbRow
     [Column("stats_base")]  public string StatsBaseJson { get; set; }
     [Column("stats_lord")]  public string StatsLordJson { get; set; }
 
-    // ── Abilities (ids into the abilities table) ──
+    // ── Abilities (ids into the per-kind ability tables) ──
     [Column("basic_ability_id")]  public string BasicAbilityId { get; set; }
     [Column("bb_ability_id")]     public string BbAbilityId { get; set; }
     [Column("sbb_ability_id")]    public string SbbAbilityId { get; set; }
@@ -243,8 +251,37 @@ public class UnitDbRow
     };
 }
 
-[Table("abilities")]
-public class AbilityDbRow
+// ── Ability kind ─────────────────────────────────────────────────────────────
+// Which ability table an id belongs to. Mirrored by the unit fields:
+// basicAbilityId → Basic, bb/sbb/ubbAbilityId → Bb, leaderAbilityId → Leader,
+// extraAbilityId → Extra.
+public enum AbilityKind
+{
+    Basic,   // normal attacks (id = the owning unit's id)
+    Bb,      // bb, sbb and ubb (skill MST ids, unique across all three)
+    Leader,  // leader skills
+    Extra    // extra skills
+}
+
+public static class AbilityKinds
+{
+    /// <summary>File-name / display tag for a kind: ability_{tag}_{id}.</summary>
+    public static string Tag(this AbilityKind kind) => kind switch
+    {
+        AbilityKind.Basic  => "basic",
+        AbilityKind.Bb     => "bb",
+        AbilityKind.Leader => "leader",
+        _                  => "extra"
+    };
+
+    /// <summary>SQLite table holding a kind's rows.</summary>
+    public static string TableName(this AbilityKind kind) => $"abilities_{Tag(kind)}";
+}
+
+// Shared shape for every ability table. Never mapped itself — the sealed
+// subclasses below carry the [Table] mapping and are the only types handed to
+// sqlite-net (CreateTable/Find/Insert all resolve the concrete runtime type).
+public abstract class AbilityDbRow
 {
     [PrimaryKey] [Column("ability_id")]   public string AbilityId { get; set; }
     [Indexed]    [Column("ability_name")] public string AbilityName { get; set; }
@@ -256,18 +293,28 @@ public class AbilityDbRow
     [Column("effect_frames")] public string EffectFramesJson { get; set; }
     [Column("levels")]        public string LevelsJson { get; set; }
 
-    public static AbilityDbRow FromDto(AbilityData d) => new AbilityDbRow
+    /// <summary>Builds a row of the concrete table type for a kind.</summary>
+    public static AbilityDbRow FromDto(AbilityKind kind, AbilityData d) => kind switch
     {
-        AbilityId = d.abilityId,
-        AbilityName = d.abilityName,
-        AbilityDesc = d.abilityDesc,
-        TargetType = d.targetType.ToString(),
-        TargetArea = d.targetArea.ToString(),
-        DropChecksPerHit = d.dropChecksPerHit,
-        HitFramesJson = UnitDbJson.Serialize(d.hitFrames),
-        EffectFramesJson = UnitDbJson.Serialize(d.effectFrames),
-        LevelsJson = UnitDbJson.Serialize(d.levels)
+        AbilityKind.Basic  => Copy(d, new BasicAbilityDbRow()),
+        AbilityKind.Bb     => Copy(d, new BbAbilityDbRow()),
+        AbilityKind.Leader => Copy(d, new LeaderAbilityDbRow()),
+        _                  => Copy(d, new ExtraAbilityDbRow())
     };
+
+    static T Copy<T>(AbilityData d, T row) where T : AbilityDbRow
+    {
+        row.AbilityId = d.abilityId;
+        row.AbilityName = d.abilityName;
+        row.AbilityDesc = d.abilityDesc;
+        row.TargetType = d.targetType.ToString();
+        row.TargetArea = d.targetArea.ToString();
+        row.DropChecksPerHit = d.dropChecksPerHit;
+        row.HitFramesJson = UnitDbJson.Serialize(d.hitFrames);
+        row.EffectFramesJson = UnitDbJson.Serialize(d.effectFrames);
+        row.LevelsJson = UnitDbJson.Serialize(d.levels);
+        return row;
+    }
 
     public AbilityData ToDto() => new AbilityData
     {
@@ -282,6 +329,11 @@ public class AbilityDbRow
         levels = UnitDbJson.Deserialize<List<AbilityLevel>>(LevelsJson)
     };
 }
+
+[Table("abilities_basic")]  public sealed class BasicAbilityDbRow  : AbilityDbRow { }
+[Table("abilities_bb")]     public sealed class BbAbilityDbRow     : AbilityDbRow { }
+[Table("abilities_leader")] public sealed class LeaderAbilityDbRow : AbilityDbRow { }
+[Table("abilities_extra")]  public sealed class ExtraAbilityDbRow  : AbilityDbRow { }
 
 [Table("meta")]
 public class MetaRow

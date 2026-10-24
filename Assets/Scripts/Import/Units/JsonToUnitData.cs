@@ -3,8 +3,8 @@
 // (Data-Driven)"). All raw-data parsing/resolution lives in RawUnitParser
 // (shared with UnitDatabaseBuilder, which packs the same DTOs straight into
 // units.db); this window only drives the loop and emits the typed JSON files:
-//   Assets/AddressableContent/UnitData/unit_{id}.json        → UnitData
-//   Assets/AddressableContent/UnitData/ability_{skillId}.json → AbilityData (deduplicated)
+//   Assets/AddressableContent/UnitData/unit_{id}.json              → UnitData
+//   Assets/AddressableContent/UnitData/ability_{kind}_{id}.json    → AbilityData (deduplicated per kind)
 // Output files are registered into chunked DD_UnitData_* Addressables groups
 // (no .asset baking anywhere).
 using System.Collections.Generic;
@@ -73,11 +73,11 @@ public class JsonToUnitData : EditorWindow
         EditorUtility.ClearProgressBar();
 
         // Parsing is done — flush every DTO to disk (abilities come back
-        // deduplicated across units from the parser).
+        // deduplicated across units from the parser, keyed by kind + id).
         foreach (UnitData unit in units)
             WriteJson($"unit_{unit.unitId}.json", unit);
-        foreach (AbilityData ability in _parser.EmittedAbilities.Values)
-            WriteJson($"ability_{ability.abilityId}.json", ability);
+        foreach (var kv in _parser.EmittedAbilities)
+            WriteJson($"ability_{kv.Key.Kind.Tag()}_{kv.Key.AbilityId}.json", kv.Value);
 
         AssetDatabase.Refresh();
         RegisterAddressables();

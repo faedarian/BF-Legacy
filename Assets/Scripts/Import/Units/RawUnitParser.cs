@@ -7,7 +7,8 @@
 // Input: raw unit JSON (default JsonData/Units/*.json) plus the raw asset
 // folders (cgg/cgs/sprites/sam/sound) and the SKILL_MST / EFFECT_GROUP_MST
 // editor tables. Output: one UnitData per file plus deduplicated AbilityData
-// per skill (EmittedAbilities). UUID keys from the source JSON are consumed as
+// per skill (EmittedAbilities, keyed by kind + id — see UnitDbRows). UUID keys
+// from the source JSON are consumed as
 // the source of truth for display positions, but the output contains typed
 // fields only. Every referenced asset (sprites with __v2..__v9 fallback,
 // cgg/cgs/sam, audio, ParticleEffect ids) is verified to exist; missing refs
@@ -37,7 +38,7 @@ public sealed class RawUnitParser
     // ── run state ──
     readonly HashSet<string> _particleIds = new();          // verification index
     readonly Dictionary<string, string> _audioCache = new(); // clip file name → address
-    readonly Dictionary<string, AbilityData> _emittedAbilities = new(); // dedup across units
+    readonly Dictionary<(AbilityKind Kind, string AbilityId), AbilityData> _emittedAbilities = new(); // dedup across units
     readonly HashSet<string> _emittedUnitIds = new();
 
     public int MissingSprites    { get; private set; }
@@ -45,8 +46,12 @@ public sealed class RawUnitParser
     public int MissingAudio      { get; private set; }
     public int MissingAnimations { get; private set; }
 
-    /// <summary>Unique abilities emitted so far, by ability id (dedup across units).</summary>
-    public IReadOnlyDictionary<string, AbilityData> EmittedAbilities => _emittedAbilities;
+    /// <summary>
+    /// Unique abilities emitted so far, by (kind, ability id). Kinds mirror the
+    /// per-kind ability tables: the same numeric id can exist in more than one
+    /// id space (leader/extra vs skill MST), so the kind is part of the key.
+    /// </summary>
+    public IReadOnlyDictionary<(AbilityKind Kind, string AbilityId), AbilityData> EmittedAbilities => _emittedAbilities;
 
     /// <summary>Ids of the units successfully parsed so far.</summary>
     public IReadOnlyCollection<string> EmittedUnitIds => _emittedUnitIds;
@@ -230,13 +235,13 @@ public sealed class RawUnitParser
         // ── Visuals & Animation (resolved to addressable paths) ──
         ResolveAnimationData(unit, unitId);
 
-        // ── Abilities (emitted as separate deduplicated DTOs) ────
-        unit.basicAbilityId  = EmitAbility(BuildNormalAbility(data, unitId, unit.unitName));
-        unit.bbAbilityId     = EmitAbility(BuildLeveledAbility(data["bb"]  as JObject, data, "bbmultiplier",  "bbdc",  $"unknown_{unitId}_bb"));
-        unit.sbbAbilityId    = EmitAbility(BuildLeveledAbility(data["sbb"] as JObject, data, "sbbmultiplier", "sbbdc", $"unknown_{unitId}_sbb"));
-        unit.ubbAbilityId    = EmitAbility(BuildLeveledAbility(data["ubb"] as JObject, data, "ubbmultiplier", "ubbdc", $"unknown_{unitId}_ubb"));
-        unit.leaderAbilityId = EmitAbility(BuildFlatAbility(data["leader_skill"] as JObject, $"unknown_{unitId}_leader", "leader"));
-        unit.extraAbilityId  = EmitAbility(BuildFlatAbility(data["extra_skill"]  as JObject, $"unknown_{unitId}_extra", "extra"));
+        // ── Abilities (emitted as separate deduplicated DTOs, one per table kind) ──
+        unit.basicAbilityId  = EmitAbility(AbilityKind.Basic,  BuildNormalAbility(data, unitId, unit.unitName));
+        unit.bbAbilityId     = EmitAbility(AbilityKind.Bb,     BuildLeveledAbility(data["bb"]  as JObject, data, "bbmultiplier",  "bbdc",  $"unknown_{unitId}_bb"));
+        unit.sbbAbilityId    = EmitAbility(AbilityKind.Bb,     BuildLeveledAbility(data["sbb"] as JObject, data, "sbbmultiplier", "sbbdc", $"unknown_{unitId}_sbb"));
+        unit.ubbAbilityId    = EmitAbility(AbilityKind.Bb,     BuildLeveledAbility(data["ubb"] as JObject, data, "ubbmultiplier", "ubbdc", $"unknown_{unitId}_ubb"));
+        unit.leaderAbilityId = EmitAbility(AbilityKind.Leader, BuildFlatAbility(data["leader_skill"] as JObject, $"unknown_{unitId}_leader"));
+        unit.extraAbilityId  = EmitAbility(AbilityKind.Extra,  BuildFlatAbility(data["extra_skill"]  as JObject, $"unknown_{unitId}_extra"));
 
         _emittedUnitIds.Add(unitId);
         return unit;
@@ -268,7 +273,10 @@ public sealed class RawUnitParser
 
         var a = new AbilityData
         {
-            abilityId        = $"normal_{unitId}",
+            // Basic attack ids are the unit's own id — the abilities_basic table
+            // (and the basicAbilityId field that references it) disambiguates
+            // them from skill ids, so no prefix is needed.
+            abilityId        = unitId,
             abilityName      = $"{unitName} Normal Attack",
             targetType       = TargetType.SingleEnemy,
             targetArea       = TargetArea.Single,
@@ -348,14 +356,16 @@ public sealed class RawUnitParser
         return a;
     }
 
-    private AbilityData BuildFlatAbility(JObject skillObj, string fallbackId, string abilityType)
+    private AbilityData BuildFlatAbility(JObject skillObj, string fallbackId)
     {
         if (skillObj == null) return null;
 
         string name = skillObj["name"]?.ToString();
         if (string.IsNullOrWhiteSpace(name)) return null;
 
-        string abilityId = abilityType + "_" + skillObj["id"]?.ToString();
+        // Raw leader/extra skill ids live in their own id spaces — the per-kind
+        // ability tables disambiguate them, so the id is used unprefixed.
+        string abilityId = skillObj["id"]?.ToString();
         if (string.IsNullOrWhiteSpace(abilityId)) abilityId = fallbackId;
 
         return new AbilityData
@@ -377,20 +387,24 @@ public sealed class RawUnitParser
         };
     }
 
-    /// <summary>Deduplicates across units (abilities are shared); returns the ability id, or null.</summary>
-    private string EmitAbility(AbilityData ability)
+    /// <summary>
+    /// Deduplicates across units (abilities are shared) within one kind; returns
+    /// the ability id, or null.
+    /// </summary>
+    private string EmitAbility(AbilityKind kind, AbilityData ability)
     {
         if (ability == null) return null;
+        var key = (kind, ability.abilityId);
 
-        if (_emittedAbilities.TryGetValue(ability.abilityId, out AbilityData existing))
+        if (_emittedAbilities.TryGetValue(key, out AbilityData existing))
         {
             if (existing.abilityName != ability.abilityName)
-                Debug.LogWarning($"[RawUnitParser] Ability id '{ability.abilityId}' reused by different names: " +
+                Debug.LogWarning($"[RawUnitParser] Ability {kind.Tag()} id '{ability.abilityId}' reused by different names: " +
                                  $"'{existing.abilityName}' vs '{ability.abilityName}' — keeping the first.");
             return ability.abilityId;
         }
 
-        _emittedAbilities[ability.abilityId] = ability;
+        _emittedAbilities[key] = ability;
         return ability.abilityId;
     }
 

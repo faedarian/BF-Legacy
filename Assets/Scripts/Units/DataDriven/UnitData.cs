@@ -54,7 +54,7 @@ public class UnitData
     [JsonProperty("statsBase")] public UnitStats statsBase;
     [JsonProperty("statsLord")] public UnitStats statsLord;
 
-    // ── Abilities (ids into the shared ability JSON files) ──
+    // ── Abilities (ids into the per-kind ability tables / JSON files) ──
     [JsonProperty("basicAbilityId")]  public string basicAbilityId;
     [JsonProperty("bbAbilityId")]     public string bbAbilityId;
     [JsonProperty("sbbAbilityId")]    public string sbbAbilityId;

@@ -9,6 +9,7 @@
 //               it lands lookups degrade to null like any missing unit)
 //   s_modConn  ':memory:' overlay schema holding the external folder JSONs
 //              (UnitDataPaths.ExternalRoot); overlay rows win over base rows
+//              (units_*.json, ability_{basic|bb|leader|extra}_*.json)
 // NOTE: the overlay is a separate connection because a READ-ONLY SQLite
 // connection cannot write to an ATTACH'd ':memory:' database.
 using System;
@@ -79,7 +80,10 @@ public static class UnitDataDb
                 SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.Memory);
             s_modConn.BusyTimeout = TimeSpan.FromSeconds(1);
             s_modConn.CreateTable<UnitDbRow>();
-            s_modConn.CreateTable<AbilityDbRow>();
+            s_modConn.CreateTable<BasicAbilityDbRow>();
+            s_modConn.CreateTable<BbAbilityDbRow>();
+            s_modConn.CreateTable<LeaderAbilityDbRow>();
+            s_modConn.CreateTable<ExtraAbilityDbRow>();
             LoadExternalJsons();
         }
         catch (Exception e)
@@ -236,7 +240,7 @@ public static class UnitDataDb
         if (!Directory.Exists(root)) return;
 
         var unitRows = new List<UnitDbRow>();
-        var abilityRows = new List<AbilityDbRow>();
+        var abilityRows = new List<AbilityDbRow>(); // concrete kind rows — sqlite-net maps them by runtime type
 
         foreach (string file in Directory.GetFiles(root, "*.json"))
         {
@@ -252,14 +256,22 @@ public static class UnitDataDb
                     else
                         unitRows.Add(UnitDbRow.FromDto(dto));
                 }
-                else if (name.StartsWith("ability_", StringComparison.Ordinal))
+                else if (TryParseAbilityFileName(name, out AbilityKind kind))
                 {
                     var dto = JsonConvert.DeserializeObject<AbilityData>(json, DataDrivenJson.Settings);
                     if (dto == null)
                         Debug.LogError($"[UnitDataDb] External file '{file}' deserialized to null — skipped.");
                     else
-                        abilityRows.Add(AbilityDbRow.FromDto(dto));
+                        abilityRows.Add(AbilityDbRow.FromDto(kind, dto));
                 }
+                else if (name.StartsWith("ability_", StringComparison.Ordinal))
+                {
+                    // Recognized but untagged (pre-split export) — abilities are
+                    // kind-scoped now, so these can't be routed to a table.
+                    Debug.LogWarning($"[UnitDataDb] External file '{name}' ignored — legacy naming; expected " +
+                                     "ability_(basic|bb|leader|extra)_*.json (re-export external units).");
+                }
+                // Unrelated *.json files are silently ignored, as before.
             }
             catch (Exception e)
             {
@@ -279,6 +291,27 @@ public static class UnitDataDb
         Debug.Log($"[UnitDataDb] Mod overlay loaded from '{root}': {unitRows.Count} units, {abilityRows.Count} abilities.");
     }
 
+    /// <summary>"ability_(basic|bb|leader|extra)_{id}.json" → its ability kind; false otherwise.</summary>
+    static bool TryParseAbilityFileName(string fileName, out AbilityKind kind)
+    {
+        kind = default;
+        const string prefix = "ability_";
+        if (!fileName.StartsWith(prefix, StringComparison.Ordinal)) return false;
+
+        string rest = fileName.Substring(prefix.Length);
+        int sep = rest.IndexOf('_');
+        if (sep < 0) return false;
+
+        switch (rest.Substring(0, sep))
+        {
+            case "basic":  kind = AbilityKind.Basic;  return true;
+            case "bb":     kind = AbilityKind.Bb;     return true;
+            case "leader": kind = AbilityKind.Leader; return true;
+            case "extra":  kind = AbilityKind.Extra;  return true;
+            default:       return false;
+        }
+    }
+
     // ── Lookups (overlay first, then base) ──
 
     public static UnitData GetUnitData(string unitId)
@@ -291,15 +324,28 @@ public static class UnitDataDb
         return row?.ToDto();
     }
 
-    public static AbilityData GetAbilityData(string abilityId)
+    /// <summary>
+    /// Resolves an ability by kind + id. The kind selects the per-kind table
+    /// (unit data references ids together with the field that holds them), so
+    /// ids that collide numerically across id spaces stay unambiguous.
+    /// </summary>
+    public static AbilityData GetAbilityData(AbilityKind kind, string abilityId)
     {
         if (string.IsNullOrEmpty(abilityId)) return null;
         EnsureOpen();
 
-        AbilityDbRow row = QueryOverlayRow<AbilityDbRow>(abilityId)
-                           ?? (s_conn != null ? s_conn.Find<AbilityDbRow>(abilityId) : null);
+        AbilityDbRow row = kind switch
+        {
+            AbilityKind.Basic  => QueryOverlayRow<BasicAbilityDbRow>(abilityId)  ?? BaseAbilityRow<BasicAbilityDbRow>(abilityId),
+            AbilityKind.Bb     => QueryOverlayRow<BbAbilityDbRow>(abilityId)     ?? BaseAbilityRow<BbAbilityDbRow>(abilityId),
+            AbilityKind.Leader => QueryOverlayRow<LeaderAbilityDbRow>(abilityId) ?? BaseAbilityRow<LeaderAbilityDbRow>(abilityId),
+            _                  => QueryOverlayRow<ExtraAbilityDbRow>(abilityId)  ?? BaseAbilityRow<ExtraAbilityDbRow>(abilityId)
+        };
         return row?.ToDto();
     }
+
+    static T BaseAbilityRow<T>(string id) where T : class, new()
+        => s_conn != null ? s_conn.Find<T>(id) : null;
 
     static T QueryOverlayRow<T>(string id) where T : new()
     {

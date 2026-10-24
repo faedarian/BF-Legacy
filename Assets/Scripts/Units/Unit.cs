@@ -56,19 +56,19 @@ public class Unit
     public int sellPrice => d.sellPrice;
     public bool sellCaution => d.sellCaution;
 
-    // ── Ability: costruite al primo accesso ──
+    // ── Ability: costruite al primo accesso (kind seleziona la tabella abilità) ──
     Ability _basic, _bb, _sbb, _ubb, _leader, _extra;
     bool _basicD, _bbD, _sbbD, _ubbD, _leaderD, _extraD;
-    public Ability basicAbility  => Lazy(ref _basic,  ref _basicD,  d.basicAbilityId);
-    public Ability bbAbility     => Lazy(ref _bb,     ref _bbD,     d.bbAbilityId);
-    public Ability sbbAbility    => Lazy(ref _sbb,    ref _sbbD,    d.sbbAbilityId);
-    public Ability ubbAbility    => Lazy(ref _ubb,    ref _ubbD,    d.ubbAbilityId);
-    public Ability leaderAbility => Lazy(ref _leader, ref _leaderD, d.leaderAbilityId);
-    public Ability extraAbility  => Lazy(ref _extra,  ref _extraD,  d.extraAbilityId);
+    public Ability basicAbility  => Lazy(ref _basic,  ref _basicD,  AbilityKind.Basic,  d.basicAbilityId);
+    public Ability bbAbility     => Lazy(ref _bb,     ref _bbD,     AbilityKind.Bb,     d.bbAbilityId);
+    public Ability sbbAbility    => Lazy(ref _sbb,    ref _sbbD,    AbilityKind.Bb,     d.sbbAbilityId);
+    public Ability ubbAbility    => Lazy(ref _ubb,    ref _ubbD,    AbilityKind.Bb,     d.ubbAbilityId);
+    public Ability leaderAbility => Lazy(ref _leader, ref _leaderD, AbilityKind.Leader, d.leaderAbilityId);
+    public Ability extraAbility  => Lazy(ref _extra,  ref _extraD,  AbilityKind.Extra,  d.extraAbilityId);
 
-    static Ability Lazy(ref Ability cache, ref bool done, string id)
+    static Ability Lazy(ref Ability cache, ref bool done, AbilityKind kind, string id)
     {
-        if (!done) { cache = AbilityRegistry.GetAbilityById(id); done = true; }
+        if (!done) { cache = AbilityRegistry.GetAbilityById(kind, id); done = true; }
         return cache;
     }
 
